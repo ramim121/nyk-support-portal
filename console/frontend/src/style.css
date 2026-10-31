@@ -84,7 +84,16 @@ button.danger:hover { background: var(--danger-600); }
   border-bottom: 1px solid var(--border); box-shadow: var(--shadow);
   z-index: 2;
 }
+.icon-btn {
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+  padding: 6px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center;
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--brand-navy); }
 .brand-logo-sm { height: 26px; width: auto; display: block; }
+
+/* Collapsed sidebar: reclaim the full width for the remote screen. */
+#app.sidebar-collapsed #sidebar { display: none; }
+#app.sidebar-collapsed #sidebar-toggle { color: var(--brand-orange); border-color: var(--brand-orange); }
 .brand-tag {
   font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
   color: var(--brand-navy); background: #e9edf8; border: 1px solid #dde3f3;

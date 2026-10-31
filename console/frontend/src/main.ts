@@ -49,6 +49,25 @@ $("logout-btn").addEventListener("click", async () => {
   location.reload();
 });
 
+// Collapsible sidebar — maximizes the remote-screen area. Remembered per browser.
+const SIDEBAR_KEY = "nyk_sidebar_collapsed";
+(function initSidebarToggle() {
+  const app = $("app");
+  try {
+    if (localStorage.getItem(SIDEBAR_KEY) === "1") app.classList.add("sidebar-collapsed");
+  } catch {
+    /* ignore */
+  }
+  $("sidebar-toggle").addEventListener("click", () => {
+    const collapsed = app.classList.toggle("sidebar-collapsed");
+    try {
+      localStorage.setItem(SIDEBAR_KEY, collapsed ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  });
+})();
+
 function enterApp() {
   loginView.hidden = true;
   appView.hidden = false;
