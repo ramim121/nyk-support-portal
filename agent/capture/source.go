@@ -1,47 +1,44 @@
-// Package capture defines the agent's video source abstraction: something that
-// produces a stream of H.264 access units (Annex-B, with start codes) to be
-// sent over the WebRTC video track.
+// Package capture defines the agent's screen source: something that produces a
+// stream of raw RGBA frames for a chosen display. Compression into tiles is
+// done separately (package encode), so the platform code here stays small and
+// free of any codec.
 //
-// Two implementations exist:
-//   - fake: replays an embedded test pattern (dev/CI, any OS, no cgo).
-//   - windows: real desktop capture + H.264 encode (built separately).
-//
-// Keeping both behind this interface means the rest of the agent — signaling,
-// the peer connection, input handling — is identical in dev and in production.
+// Implementations:
+//   - fake: synthesizes animated RGBA frames (dev/CI, any OS, pure Go).
+//   - windows: captures the real desktop via a pure-Go screenshot library.
 package capture
 
 import (
 	"context"
-	"time"
 
 	"github.com/nyk/support-portal/protocol"
 )
 
-// Frame is one encoded H.264 access unit.
-type Frame struct {
-	Data     []byte        // Annex-B access unit (may include SPS/PPS/AUD)
-	Duration time.Duration // display duration of this frame
-	Keyframe bool          // true if this AU contains an IDR slice
+// RawFrame is one uncompressed frame of a display, in 8-bit RGBA, row-major,
+// with stride Width*4.
+type RawFrame struct {
+	Pix          []byte
+	Width        int
+	Height       int
+	MonitorIndex int
 }
 
-// Source produces encoded video frames from some display.
+// Source produces raw frames from a display.
 type Source interface {
 	// Monitors lists the displays available to capture.
 	Monitors() []protocol.Monitor
 
-	// Start begins producing frames on the returned channel until ctx is
-	// cancelled or Close is called. The channel is closed when production ends.
-	Start(ctx context.Context) (<-chan Frame, error)
+	// Start produces frames on the returned channel until ctx is cancelled or
+	// Close is called. The channel is closed when production stops. A frame is
+	// emitted at most SetFPS times per second; a source may skip emitting when
+	// nothing changed to save CPU, but is not required to.
+	Start(ctx context.Context) (<-chan RawFrame, error)
 
 	// SelectMonitor switches which display is captured (by Monitor.Index).
 	SelectMonitor(index int)
 
-	// SetQuality adjusts the target frame rate / bitrate.
-	SetQuality(preset protocol.QualityPreset)
-
-	// RequestKeyframe asks the encoder to emit an IDR as soon as possible,
-	// e.g. in response to a viewer's PLI / packet loss.
-	RequestKeyframe()
+	// SetFPS caps the capture rate.
+	SetFPS(fps int)
 
 	// Close releases resources.
 	Close() error

@@ -1,7 +1,9 @@
 // Package rtc wraps the agent's side of a WebRTC session. The agent is the
-// *answerer*: it receives the console's offer, attaches an outbound H.264 video
-// track fed by a capture.Source, and handles the inbound "input" and "control"
-// data channels the console created.
+// answerer: it accepts the console's offer, then over the data channels the
+// console created it (a) sends the screen as compressed tiles on "screen",
+// (b) receives input on "input", and (c) exchanges small messages on "control".
+// There is no WebRTC media track — the screen travels as tiles, which keeps the
+// client pure Go.
 package rtc
 
 import (
@@ -12,64 +14,56 @@ import (
 	"time"
 
 	"github.com/pion/webrtc/v4"
-	"github.com/pion/webrtc/v4/pkg/media"
 
 	"github.com/nyk/support-portal/agent/capture"
+	"github.com/nyk/support-portal/agent/encode"
 	"github.com/nyk/support-portal/agent/input"
 	"github.com/nyk/support-portal/protocol"
 )
 
-// Callbacks surfaces events the signaling layer must forward or react to.
+// maxScreenBuffer caps the "screen" channel's outgoing buffer. When the network
+// can't keep up, we drop frames rather than let latency grow unbounded.
+const maxScreenBuffer = 2 * 1024 * 1024 // 2 MB
+
+// Callbacks surfaces events the signaling layer forwards or reacts to.
 type Callbacks struct {
-	// SendICE forwards a locally gathered ICE candidate (JSON) to the peer.
-	SendICE func(candidateJSON string)
-	// SendAnswer forwards the local SDP answer to the peer.
-	SendAnswer func(sdp string)
-	// OnClosed fires once when the session ends for any reason.
-	OnClosed func(reason string)
-	// OnClipboard fires when the console sends clipboard text to apply locally.
+	SendICE     func(candidateJSON string)
+	SendAnswer  func(sdp string)
+	OnClosed    func(reason string)
 	OnClipboard func(text string)
 }
 
 // Peer is one agent-side WebRTC session.
 type Peer struct {
 	pc     *webrtc.PeerConnection
-	track  *webrtc.TrackLocalStaticSample
 	source capture.Source
+	enc    *encode.TileEncoder
 	sink   input.Sink
 	cb     Callbacks
 
 	mu         sync.Mutex
 	monitors   []protocol.Monitor
 	curMonitor protocol.Monitor
+	control    *webrtc.DataChannel
+	screen     *webrtc.DataChannel
+	fps        int
+	started    bool
 
-	ctx          context.Context
-	cancel       context.CancelFunc
-	closed       sync.Once
-	control      *webrtc.DataChannel
-	videoStarted bool
+	ctx    context.Context
+	cancel context.CancelFunc
+	closed sync.Once
 }
 
-// NewPeer creates the PeerConnection and video track. source frames start
-// flowing once the offer is answered and the connection is established.
 func NewPeer(iceServers []protocol.ICEServer, source capture.Source, sink input.Sink, cb Callbacks) (*Peer, error) {
-	cfg := webrtc.Configuration{ICEServers: toPionICE(iceServers)}
-	pc, err := webrtc.NewPeerConnection(cfg)
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: toPionICE(iceServers)})
 	if err != nil {
 		return nil, err
 	}
-	track, err := webrtc.NewTrackLocalStaticSample(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264}, "video", "nyk-screen")
-	if err != nil {
-		_ = pc.Close()
-		return nil, err
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	mons := source.Monitors()
 	p := &Peer{
-		pc: pc, track: track, source: source, sink: sink, cb: cb,
-		monitors: mons, ctx: ctx, cancel: cancel,
+		pc: pc, source: source, enc: encode.NewTileEncoder(), sink: sink, cb: cb,
+		monitors: mons, fps: 15, ctx: ctx, cancel: cancel,
 	}
 	if len(mons) > 0 {
 		p.curMonitor = mons[0]
@@ -90,26 +84,16 @@ func NewPeer(iceServers []protocol.ICEServer, source capture.Source, sink input.
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		log.Printf("rtc: connection state %s", s)
 		switch s {
-		case webrtc.PeerConnectionStateConnected:
-			p.startVideo()
 		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateDisconnected:
 			p.Close("connection " + s.String())
 		}
 	})
 	pc.OnDataChannel(p.onDataChannel)
-
 	return p, nil
 }
 
-// HandleOffer applies the remote offer, attaches the video track, and produces
-// the answer (sent via Callbacks.SendAnswer).
 func (p *Peer) HandleOffer(sdp string) error {
 	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp}); err != nil {
-		return err
-	}
-	// Attach the outbound track after SetRemoteDescription so pion binds it to
-	// the video transceiver the console offered.
-	if _, err := p.pc.AddTrack(p.track); err != nil {
 		return err
 	}
 	answer, err := p.pc.CreateAnswer(nil)
@@ -123,7 +107,6 @@ func (p *Peer) HandleOffer(sdp string) error {
 	return nil
 }
 
-// AddICECandidate feeds a remote ICE candidate (JSON) into the connection.
 func (p *Peer) AddICECandidate(candidateJSON string) error {
 	var init webrtc.ICECandidateInit
 	if err := json.Unmarshal([]byte(candidateJSON), &init); err != nil {
@@ -150,6 +133,11 @@ func (p *Peer) onDataChannel(dc *webrtc.DataChannel) {
 		p.control = dc
 		p.mu.Unlock()
 		dc.OnMessage(func(msg webrtc.DataChannelMessage) { p.onControl(msg.Data) })
+	case "screen":
+		p.mu.Lock()
+		p.screen = dc
+		p.mu.Unlock()
+		dc.OnOpen(func() { p.startScreen() })
 	}
 }
 
@@ -168,13 +156,11 @@ func (p *Peer) onControl(data []byte) {
 		}
 		p.mu.Unlock()
 		p.source.SelectMonitor(c.Monitor)
-		p.source.RequestKeyframe()
+		p.enc.ForceKeyframe()
 	case protocol.CtrlSetQuality:
-		if preset, ok := protocol.QualityPresets[c.Quality]; ok {
-			p.source.SetQuality(preset)
-		}
+		p.applyQuality(c.Quality)
 	case protocol.CtrlRequestKeyframe:
-		p.source.RequestKeyframe()
+		p.enc.ForceKeyframe()
 	case protocol.CtrlClipboardText:
 		if p.cb.OnClipboard != nil {
 			p.cb.OnClipboard(c.Text)
@@ -182,15 +168,32 @@ func (p *Peer) onControl(data []byte) {
 	}
 }
 
-// startVideo begins pumping encoded frames from the source into the track. It
-// is guarded so it only runs once per peer.
-func (p *Peer) startVideo() {
+func (p *Peer) applyQuality(name string) {
+	q, fps := 55, 15
+	switch name {
+	case "low":
+		q, fps = 35, 10
+	case "med":
+		q, fps = 55, 20
+	case "high":
+		q, fps = 75, 30
+	}
+	p.enc.SetQuality(q)
+	p.source.SetFPS(fps)
 	p.mu.Lock()
-	if p.videoStarted {
+	p.fps = fps
+	p.mu.Unlock()
+	p.enc.ForceKeyframe()
+}
+
+// startScreen begins capturing and sending tiles. Runs once per peer.
+func (p *Peer) startScreen() {
+	p.mu.Lock()
+	if p.started {
 		p.mu.Unlock()
 		return
 	}
-	p.videoStarted = true
+	p.started = true
 	p.mu.Unlock()
 
 	frames, err := p.source.Start(p.ctx)
@@ -200,25 +203,40 @@ func (p *Peer) startVideo() {
 		return
 	}
 	go func() {
-		var count int
+		var sentFrames int
 		statsTick := time.NewTicker(time.Second)
 		defer statsTick.Stop()
 		for {
 			select {
 			case <-p.ctx.Done():
 				return
+			case <-statsTick.C:
+				p.sendStats(sentFrames)
+				sentFrames = 0
 			case fr, ok := <-frames:
 				if !ok {
 					return
 				}
-				if err := p.track.WriteSample(media.Sample{Data: fr.Data, Duration: fr.Duration}); err != nil {
-					log.Printf("rtc: write sample: %v", err)
-					return
+				p.mu.Lock()
+				dc := p.screen
+				p.mu.Unlock()
+				if dc == nil || dc.ReadyState() != webrtc.DataChannelStateOpen {
+					continue
 				}
-				count++
-			case <-statsTick.C:
-				p.sendStats(count)
-				count = 0
+				// Backpressure: if the send buffer is deep, drop this frame.
+				if dc.BufferedAmount() > maxScreenBuffer {
+					continue
+				}
+				msgs := p.enc.Encode(fr.Pix, fr.Width, fr.Height, fr.MonitorIndex)
+				for _, m := range msgs {
+					if err := dc.Send(m); err != nil {
+						log.Printf("rtc: screen send: %v", err)
+						return
+					}
+				}
+				if len(msgs) > 0 {
+					sentFrames++
+				}
 			}
 		}
 	}()
@@ -247,7 +265,6 @@ func (p *Peer) SendClipboard(text string) {
 	_ = dc.SendText(string(b))
 }
 
-// Close tears down the session exactly once.
 func (p *Peer) Close(reason string) {
 	p.closed.Do(func() {
 		p.cancel()

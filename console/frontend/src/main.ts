@@ -179,14 +179,11 @@ function startViewer(env: Envelope) {
     credential: s.credential,
   })) as RTCIceServer[];
 
-  const video = $<HTMLVideoElement>("video");
-  viewer = new ViewerSession(env.sessionId!, ice, sig!, {
-    onTrack: (stream) => {
-      video.srcObject = stream;
-    },
+  const canvas = $<HTMLCanvasElement>("screen");
+  viewer = new ViewerSession(env.sessionId!, ice, sig!, canvas, {
     onEnd: (reason) => endViewer(reason),
-    onStats: (fps, bitrate) => {
-      $("viewer-state").textContent = `${fps} fps · ${(bitrate / 1_000_000).toFixed(1)} Mbps`;
+    onStats: (fps) => {
+      $("viewer-state").textContent = `${fps} fps`;
     },
     onConnectionState: (st) => {
       if (st === "connected") $("viewer-state").textContent = "connected";
@@ -213,7 +210,7 @@ function startViewer(env: Envelope) {
   $("stage-idle").hidden = true;
   $("viewer").hidden = false;
 
-  viewer.bindInput(video);
+  viewer.bindInput(canvas);
   viewer.start().catch((e) => {
     toast("Failed to start: " + (e as Error).message);
     endViewer("start failed");
@@ -226,8 +223,9 @@ function endViewer(reason: string) {
     viewer.stop(false);
     viewer = null;
   }
-  const video = $<HTMLVideoElement>("video");
-  video.srcObject = null;
+  const canvas = $<HTMLCanvasElement>("screen");
+  const cctx = canvas.getContext("2d");
+  cctx?.clearRect(0, 0, canvas.width, canvas.height);
   $("viewer").hidden = true;
   $("stage-idle").hidden = false;
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});

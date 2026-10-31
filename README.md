@@ -24,21 +24,33 @@ background service and no unattended access in this version.
 1. Customer runs the agent  ->  PC shows up Online in the console list.
 2. Technician logs in, clicks the PC, clicks Connect.
 3. Customer sees an Allow / Deny prompt (auto-denies after 30s).
-4. On Allow: a direct encrypted WebRTC link forms (TURN relay as fallback).
-5. Technician sees the screen and controls mouse + keyboard.
+4. On Allow: a direct encrypted WebRTC data link forms (TURN relay as fallback).
+5. Technician sees the screen (streamed as image tiles) and controls mouse + keyboard.
    Customer sees a red "Controlled by <tech>" banner with Disconnect.
 6. Either side disconnects; the agent returns to idle. Closing the app ends all.
 ```
 
+## How the screen is streamed
+
+The client captures its screen and sends only the **changed image tiles** (JPEG)
+over an encrypted WebRTC **data channel**; the console draws them onto a canvas.
+This is **100% pure Go** on the client — no video codec, no cgo — so the agent
+is one small `.exe` that builds and cross-compiles trivially. On a typical,
+mostly-static support screen only a few small tiles move per second. WebRTC
+still provides the peer-to-peer path, encryption (DTLS/SCTP) and the TURN
+fallback; only the media format differs from a classic video codec.
+
 ## Status
 
-- [x] Shared protocol (signaling + input encoding)
-- [x] Server: auth, signaling hub, SQLite store, TURN credentials, audit log, `adduser`
-- [ ] Console app (login, device list, viewer)
-- [ ] Agent core (signaling, WebRTC, test-pattern capture)
-- [ ] Agent consent UI + banner
-- [ ] Windows screen capture + input (via `kbinani/screenshot`, `go-vgo/robotgo`)
-- [ ] Deploy files + CI build + full runbook
+- [x] Shared protocol (signaling, binary input codec, screen-tile format) — unit-tested
+- [x] Server: auth, signaling hub, SQLite store, TURN credentials, audit log, `adduser` — unit-tested
+- [x] Console app (login, live device list, canvas viewer, input capture, toolbar)
+- [x] Agent core: signaling, WebRTC, pure-Go tile encoder, fake source, input decode
+- [x] **End-to-end pipeline verified on Linux** (headless Chromium): consent → tiles
+      decode & animate on canvas → mouse/keyboard reach the client with correct mapping
+- [ ] Agent consent UI + always-on-top banner (native Windows window)
+- [ ] Windows screen capture + input injection (pure-Go `kbinani/screenshot` + input lib)
+- [ ] CI build of `agent.exe` / `console.exe` + full runbook
 
 ## Security model
 
