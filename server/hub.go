@@ -292,7 +292,7 @@ func (h *Hub) handleConsent(agent *conn, env protocol.Envelope) {
 	})
 	s.agent.enqueue(protocol.Envelope{
 		Type: protocol.TypeSessionStart, SessionID: s.id,
-		ICEServers: ice, Offerer: false,
+		ICEServers: ice, Offerer: false, TechName: s.techName,
 	})
 }
 

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NYK Support Portal — Console</title>
+  </head>
+  <body>
+    <!-- Login view -->
+    <section id="login" class="view">
+      <form id="login-form" class="card">
+        <h1>NYK Support Portal</h1>
+        <p class="sub">Technician sign in</p>
+        <label>Username<input id="username" autocomplete="username" required /></label>
+        <label>Password<input id="password" type="password" autocomplete="current-password" required /></label>
+        <button type="submit" id="login-btn">Sign in</button>
+        <p id="login-error" class="error" hidden></p>
+      </form>
+    </section>
+
+    <!-- Main app view -->
+    <section id="app" class="view" hidden>
+      <header class="topbar">
+        <span class="brand">NYK Support Portal</span>
+        <span id="conn-dot" class="dot offline" title="signaling connection"></span>
+        <span class="spacer"></span>
+        <span id="who" class="who"></span>
+        <button id="logout-btn" class="ghost">Sign out</button>
+      </header>
+
+      <div class="body">
+        <!-- Device list -->
+        <aside id="sidebar">
+          <input id="search" class="search" placeholder="Search by name, user or ID" />
+          <ul id="device-list" class="device-list"></ul>
+          <p id="empty-hint" class="hint">No client PCs yet. Ask the customer to run the NYK Support app.</p>
+        </aside>
+
+        <!-- Viewer -->
+        <main id="stage">
+          <div id="stage-idle" class="stage-idle">
+            <div>
+              <h2>Select a device</h2>
+              <p>Pick an online PC on the left and click <strong>Connect</strong>. The customer will be asked to allow the session.</p>
+            </div>
+          </div>
+
+          <div id="viewer" hidden>
+            <div class="toolbar">
+              <span id="viewer-title" class="viewer-title"></span>
+              <span id="viewer-state" class="pill"></span>
+              <span class="spacer"></span>
+              <label class="tool">Monitor
+                <select id="monitor-select"></select>
+              </label>
+              <label class="tool">Quality
+                <select id="quality-select">
+                  <option value="low">Low</option>
+                  <option value="med" selected>Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </label>
+              <button id="fit-btn" class="ghost" title="Toggle actual size / fit">Fit</button>
+              <button id="clip-btn" class="ghost" title="Send my clipboard text to the client">Send clipboard</button>
+              <button id="fs-btn" class="ghost" title="Fullscreen">Fullscreen</button>
+              <button id="disconnect-btn" class="danger">Disconnect</button>
+            </div>
+            <div id="video-wrap" class="video-wrap">
+              <video id="video" autoplay playsinline tabindex="0"></video>
+              <div id="video-overlay" class="video-overlay" hidden></div>
+            </div>
+          </div>
+        </main>
+      </div>
+      <div id="toast" class="toast" hidden></div>
+    </section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
