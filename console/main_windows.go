@@ -30,7 +30,7 @@ func main() {
 		Debug:     false,
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
-			Title:  "NYK Support Portal — Console",
+			Title:  "NYK Advance Support — Console",
 			Width:  1366,
 			Height: 860,
 			Center: true,

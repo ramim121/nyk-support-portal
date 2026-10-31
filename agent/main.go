@@ -122,7 +122,7 @@ func main() {
 		},
 	})
 
-	fmt.Printf("NYK Support Portal — this PC's ID: %s\n", protocol.FormatDeviceID(deviceID))
+	fmt.Printf("NYK Advance Support — this PC's ID: %s\n", protocol.FormatDeviceID(deviceID))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

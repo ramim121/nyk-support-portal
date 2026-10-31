@@ -4,6 +4,10 @@ import { ViewerSession } from "./viewer";
 import { Type, formatDeviceID } from "./protocol";
 import type { Device, Envelope } from "./protocol";
 import * as api from "./api";
+import { applyBrand } from "./brand";
+
+// Apply logo / name / title before anything renders.
+applyBrand();
 
 // --- element helpers ---
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -117,6 +121,9 @@ function renderDevices() {
     );
   });
   $("empty-hint").hidden = all.length > 0;
+  const onlineCount = all.filter((d) => d.online).length;
+  $("device-count").textContent = String(onlineCount);
+  $("device-count").title = `${onlineCount} online · ${all.length} total`;
 
   list.innerHTML = "";
   for (const d of filtered) {

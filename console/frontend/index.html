@@ -2,26 +2,29 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="logo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NYK Support Portal — Console</title>
+    <title>NYK Advance Support — Console</title>
   </head>
   <body>
     <!-- Login view -->
     <section id="login" class="view">
       <form id="login-form" class="card">
-        <h1>NYK Support Portal</h1>
-        <p class="sub">Technician sign in</p>
+        <img id="brand-logo" class="brand-logo" src="logo.svg" alt="NYK" />
+        <p id="login-sub" class="sub">Secure remote support — technician sign in</p>
         <label>Username<input id="username" autocomplete="username" required /></label>
         <label>Password<input id="password" type="password" autocomplete="current-password" required /></label>
         <button type="submit" id="login-btn">Sign in</button>
         <p id="login-error" class="error" hidden></p>
       </form>
+      <p class="login-foot">Encrypted peer-to-peer • consent required on every session</p>
     </section>
 
     <!-- Main app view -->
     <section id="app" class="view" hidden>
       <header class="topbar">
-        <span class="brand">NYK Support Portal</span>
+        <img id="brand-logo-top" class="brand-logo-sm" src="logo.svg" alt="NYK" />
+        <span id="brand-tag-top" class="brand-tag">Support Console</span>
         <span id="conn-dot" class="dot offline" title="signaling connection"></span>
         <span class="spacer"></span>
         <span id="who" class="who"></span>
@@ -31,18 +34,21 @@
       <div class="body">
         <!-- Device list -->
         <aside id="sidebar">
+          <div class="sidebar-head">
+            <span class="sidebar-title">Devices</span>
+            <span id="device-count" class="count">0</span>
+          </div>
           <input id="search" class="search" placeholder="Search by name, user or ID" />
           <ul id="device-list" class="device-list"></ul>
-          <p id="empty-hint" class="hint">No client PCs yet. Ask the customer to run the NYK Support app.</p>
+          <p id="empty-hint" class="hint">No client PCs yet. Ask the customer to run the NYK Advance Support app.</p>
         </aside>
 
         <!-- Viewer -->
         <main id="stage">
           <div id="stage-idle" class="stage-idle">
-            <div>
-              <h2>Select a device</h2>
-              <p>Pick an online PC on the left and click <strong>Connect</strong>. The customer will be asked to allow the session.</p>
-            </div>
+            <img class="idle-logo" src="logo.svg" alt="" />
+            <h2>Select a device</h2>
+            <p>Pick an online PC on the left and click <strong>Connect</strong>. The customer will be asked to allow the session.</p>
           </div>
 
           <div id="viewer" hidden>

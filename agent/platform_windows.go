@@ -20,10 +20,22 @@ import (
 func newPlatformSource() capture.Source { return capture.NewWindows() }
 func newPlatformSink() input.Sink       { return input.NewWindows() }
 
+// Product name shown in the agent window and dialogs.
+const productName = "NYK Advance Support"
+
+// Brand colors (match the console theme).
+var (
+	colNavy  = walk.RGB(45, 61, 127)
+	colGreen = walk.RGB(22, 163, 74)
+	colRed   = walk.RGB(220, 38, 38)
+	colMuted = walk.RGB(104, 113, 138)
+)
+
 // winUI holds the live widgets so the consent/banner hooks (called from the
 // signaling goroutine) can drive them via MainWindow.Synchronize.
 type winUI struct {
 	mw           *walk.MainWindow
+	statusDot    *walk.Label
 	statusLabel  *walk.Label
 	disconnectBt *walk.PushButton
 	client       clientDisconnector
@@ -50,26 +62,36 @@ func platformRun(ctx context.Context, p platformUI) {
 
 	idText := protocol.FormatDeviceID(p.deviceID)
 
+	var header, idLabel, idCaption *walk.Label
 	err := d.MainWindow{
-		AssignTo: &u.mw,
-		Title:    "NYK Support Portal",
-		Size:     d.Size{Width: 440, Height: 250},
-		Layout:   d.VBox{Margins: d.Margins{Left: 16, Top: 16, Right: 16, Bottom: 16}},
+		AssignTo:   &u.mw,
+		Title:      productName,
+		Size:       d.Size{Width: 460, Height: 300},
+		Layout:     d.VBox{Margins: d.Margins{Left: 22, Top: 18, Right: 22, Bottom: 18}, Spacing: 10},
+		Background: d.SolidColorBrush{Color: walk.RGB(255, 255, 255)},
 		Children: []d.Widget{
-			d.Label{Text: "NYK Support Portal", Font: d.Font{PointSize: 14, Bold: true}},
-			d.Label{Text: "Your support ID — read this to your NYK technician:"},
-			d.Label{Text: idText, Font: d.Font{PointSize: 22, Bold: true}},
-			d.Label{AssignTo: &u.statusLabel, Text: "Waiting for a support session…"},
+			d.Label{AssignTo: &header, Text: productName, Font: d.Font{Family: "Segoe UI", PointSize: 15, Bold: true}},
+			d.VSeparator{},
+			d.Label{AssignTo: &idCaption, Text: "Your support ID — read this to your technician:"},
+			d.Label{AssignTo: &idLabel, Text: idText, Font: d.Font{Family: "Segoe UI", PointSize: 26, Bold: true}},
+			d.Composite{
+				Layout: d.HBox{MarginsZero: true, Spacing: 8},
+				Children: []d.Widget{
+					d.Label{AssignTo: &u.statusDot, Text: "●", Font: d.Font{PointSize: 11, Bold: true}},
+					d.Label{AssignTo: &u.statusLabel, Text: "Waiting for a support session…", Font: d.Font{PointSize: 10}},
+					d.HSpacer{},
+				},
+			},
 			d.PushButton{
 				AssignTo:  &u.disconnectBt,
-				Text:      "Disconnect",
+				Text:      "End session",
 				Visible:   false,
 				OnClicked: func() { u.client.Disconnect() },
 			},
 			d.VSpacer{},
 			d.Label{
-				Text: "Keep this window open during support. No one can see or control " +
-					"this PC unless you click Allow. Closing this window ends the session.",
+				Text: "Keep this window open during support. No one can see or control this PC " +
+					"unless you click Allow. Closing this window ends the session immediately.",
 				Font: d.Font{PointSize: 8},
 			},
 		},
@@ -80,6 +102,13 @@ func platformRun(ctx context.Context, p platformUI) {
 		p.client.Run(ctx)
 		return
 	}
+
+	// Apply brand colors (declarative widgets don't take text colors directly).
+	header.SetTextColor(colNavy)
+	idLabel.SetTextColor(colNavy)
+	idCaption.SetTextColor(colMuted)
+	u.statusDot.SetTextColor(colGreen)
+	u.statusLabel.SetTextColor(colMuted)
 
 	// Keep the window above others so the customer always sees it.
 	win.SetWindowPos(u.mw.Handle(), win.HWND_TOPMOST, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE)
@@ -109,8 +138,8 @@ func promptConsent(_, tech string) bool {
 	resp := make(chan bool, 1)
 	u.mw.Synchronize(func() {
 		msg := tech + " is requesting to view and control this computer.\n\n" +
-			"Only click Allow if you are expecting support from NYK.\n\nAllow this session?"
-		r := walk.MsgBox(u.mw, "NYK Support Portal — Allow session?", msg,
+			"Only click Yes if you are expecting support from " + productName + ".\n\nAllow this session?"
+		r := walk.MsgBox(u.mw, productName+" — Allow session?", msg,
 			walk.MsgBoxYesNo|walk.MsgBoxIconWarning|walk.MsgBoxDefButton2)
 		resp <- r == win.IDYES
 	})
@@ -129,9 +158,11 @@ func showBanner(tech string) {
 		return
 	}
 	u.mw.Synchronize(func() {
-		u.statusLabel.SetText("● Your screen is being controlled by " + tech)
+		u.statusDot.SetTextColor(colRed)
+		u.statusLabel.SetTextColor(colRed)
+		u.statusLabel.SetText("Your screen is being controlled by " + tech)
 		u.disconnectBt.SetVisible(true)
-		u.mw.SetTitle("NYK Support Portal — CONTROLLED")
+		u.mw.SetTitle(productName + " — CONNECTED")
 		win.SetWindowPos(u.mw.Handle(), win.HWND_TOPMOST, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE)
 	})
 }
@@ -143,9 +174,11 @@ func hideBanner() {
 		return
 	}
 	u.mw.Synchronize(func() {
+		u.statusDot.SetTextColor(colGreen)
+		u.statusLabel.SetTextColor(colMuted)
 		u.statusLabel.SetText("Waiting for a support session…")
 		u.disconnectBt.SetVisible(false)
-		u.mw.SetTitle("NYK Support Portal")
+		u.mw.SetTitle(productName)
 	})
 }
 
