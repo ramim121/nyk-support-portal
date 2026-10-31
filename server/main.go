@@ -35,8 +35,9 @@ type config struct {
 	dbPath     string
 	orgKey     string
 	consoleDir string
-	dev        bool
-	turn       turnConfig
+	dev         bool
+	behindProxy bool
+	turn        turnConfig
 }
 
 func main() {
@@ -81,6 +82,19 @@ func main() {
 		_ = httpSrv.Shutdown(shutCtx)
 	}()
 
+	// Behind a TLS-terminating reverse proxy (nginx/Apache/caddy): serve plain
+	// HTTP on cfg.addr (typically a localhost port). TLS and the public domain
+	// are handled by the proxy; we still verify WebSocket origins against the
+	// domain (acceptOpts does this whenever dev is false).
+	if cfg.behindProxy {
+		httpSrv.Addr = cfg.addr
+		log.Printf("NYK Support Portal server (behind reverse proxy) listening on %s for %s", cfg.addr, cfg.domain)
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("serve: %v", err)
+		}
+		return
+	}
+
 	if cfg.dev || cfg.domain == "" {
 		httpSrv.Addr = cfg.addr
 		log.Printf("NYK Support Portal server (dev/plain HTTP) listening on %s", cfg.addr)
@@ -113,12 +127,13 @@ func main() {
 
 func parseFlags() config {
 	var cfg config
-	flag.StringVar(&cfg.addr, "addr", ":8080", "listen address in dev mode")
+	flag.StringVar(&cfg.addr, "addr", envOr("NYK_ADDR", ":8080"), "listen address for dev / behind-proxy modes (e.g. 127.0.0.1:3000)")
 	flag.StringVar(&cfg.domain, "domain", envOr("NYK_DOMAIN", ""), "public domain for automatic TLS (empty = dev HTTP)")
 	flag.StringVar(&cfg.dbPath, "db", envOr("NYK_DB", "nyk.db"), "path to the SQLite database file")
 	flag.StringVar(&cfg.orgKey, "orgkey", envOr("NYK_ORG_KEY", ""), "shared secret that agents must present")
 	flag.StringVar(&cfg.consoleDir, "console-dir", envOr("NYK_CONSOLE_DIR", "console/frontend/dist"), "directory of the built console web app")
 	flag.BoolVar(&cfg.dev, "dev", false, "dev mode: plain HTTP, permissive WebSocket origins")
+	flag.BoolVar(&cfg.behindProxy, "behind-proxy", envBool("NYK_BEHIND_PROXY"), "serve plain HTTP on -addr behind a TLS-terminating reverse proxy (set -domain for origin checks)")
 	flag.StringVar(&cfg.turn.Host, "turn-host", envOr("NYK_TURN_HOST", ""), "TURN server host:port (empty = STUN only)")
 	flag.StringVar(&cfg.turn.Secret, "turn-secret", envOr("NYK_TURN_SECRET", ""), "TURN static-auth shared secret")
 	flag.StringVar(&cfg.turn.TLSURL, "turn-tls", envOr("NYK_TURN_TLS", ""), "optional turns: URL, e.g. turns:turn.example.com:5349")
@@ -127,6 +142,9 @@ func parseFlags() config {
 
 	if cfg.orgKey == "" {
 		log.Printf("WARNING: -orgkey is empty; any client may register. Set NYK_ORG_KEY before production.")
+	}
+	if cfg.behindProxy && cfg.domain == "" {
+		log.Printf("WARNING: -behind-proxy set without -domain; WebSocket origin checks will reject browsers. Set NYK_DOMAIN.")
 	}
 	return cfg
 }
@@ -369,6 +387,14 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envBool(key string) bool {
+	switch os.Getenv(key) {
+	case "1", "true", "TRUE", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func cacheDir() string {
