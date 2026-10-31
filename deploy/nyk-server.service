@@ -1,0 +1,44 @@
+# systemd unit for the NYK Support Portal server.
+#
+# Install:
+#   sudo cp bin/nyk-server /usr/local/bin/nyk-server
+#   sudo useradd --system --home /var/lib/nyk --create-home nyk   # one time
+#   sudo cp deploy/nyk-server.service /etc/systemd/system/
+#   sudo cp deploy/nyk-server.env /etc/nyk-server.env   # then edit secrets
+#   sudo systemctl daemon-reload && sudo systemctl enable --now nyk-server
+#
+# The server binds :80 and :443 for automatic TLS, which requires the
+# CAP_NET_BIND_SERVICE capability granted below (so it need not run as root).
+
+[Unit]
+Description=NYK Support Portal signaling + web server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nyk
+Group=nyk
+WorkingDirectory=/var/lib/nyk
+EnvironmentFile=/etc/nyk-server.env
+ExecStart=/usr/local/bin/nyk-server
+Restart=on-failure
+RestartSec=3
+
+# Allow binding to :80/:443 without root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/nyk
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
