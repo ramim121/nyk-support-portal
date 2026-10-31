@@ -1,0 +1,32 @@
+# Binaries
+/bin/
+*.exe
+*.exe~
+server/server
+agent/agent
+console/console
+
+# Databases & TLS cache
+*.db
+*.db-shm
+*.db-wal
+/tls-cache/
+
+# Node / frontend build
+node_modules/
+dist/
+.vite/
+
+# Wails build output
+build/bin/
+
+# Local config & secrets
+*.local
+config.yaml
+.env
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
