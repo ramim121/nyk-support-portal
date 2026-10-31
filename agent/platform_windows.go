@@ -37,17 +37,24 @@ type winUI struct {
 	mw           *walk.MainWindow
 	statusDot    *walk.Label
 	statusLabel  *walk.Label
+	consentBox   *walk.Composite
+	consentLabel *walk.Label
 	disconnectBt *walk.PushButton
 	client       clientDisconnector
+	deviceID     string
+
+	consent chan bool // set while an Allow/Deny prompt is showing
 }
 
 type clientDisconnector interface{ Disconnect() }
 
 var ui *winUI
 
-// platformRun opens the always-visible status window and runs its message loop
-// with the signaling client in the background. Closing the window ends any
-// session and exits. In headless mode it skips the UI.
+// platformRun opens the AnyDesk-style status window and runs its message loop
+// with the signaling client in the background. The window is a normal taskbar
+// window (not always-on-top) when idle, so the customer can use their PC and
+// switch windows freely; it only pops to the front for a connection request and
+// stays on top while a session is actually active. In headless mode it skips UI.
 func platformRun(ctx context.Context, p platformUI) {
 	if p.headless {
 		p.client.Run(ctx)
@@ -57,23 +64,57 @@ func platformRun(ctx context.Context, p platformUI) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	u := &winUI{client: p.client}
+	u := &winUI{client: p.client, deviceID: p.deviceID}
 	ui = u
 
 	idText := protocol.FormatDeviceID(p.deviceID)
 
-	var header, idLabel, idCaption *walk.Label
+	// Rasterize brand assets (pure Go) for the header logo and window icon.
+	var logoImg d.Widget = d.HSpacer{}
+	if img, err := renderLogo(42); err == nil {
+		if bmp, err := walk.NewBitmapFromImageForDPI(img, 96); err == nil {
+			logoImg = d.ImageView{Image: bmp, Margin: 0}
+		}
+	}
+
+	var idLabel, idCaption *walk.Label
 	err := d.MainWindow{
 		AssignTo:   &u.mw,
 		Title:      productName,
-		Size:       d.Size{Width: 460, Height: 300},
-		Layout:     d.VBox{Margins: d.Margins{Left: 22, Top: 18, Right: 22, Bottom: 18}, Spacing: 10},
+		Size:       d.Size{Width: 440, Height: 380},
+		Layout:     d.VBox{Margins: d.Margins{Left: 24, Top: 20, Right: 24, Bottom: 18}, Spacing: 12},
 		Background: d.SolidColorBrush{Color: walk.RGB(255, 255, 255)},
 		Children: []d.Widget{
-			d.Label{AssignTo: &header, Text: productName, Font: d.Font{Family: "Segoe UI", PointSize: 15, Bold: true}},
+			// Header: logo on the left.
+			d.Composite{
+				Layout:   d.HBox{MarginsZero: true},
+				Children: []d.Widget{logoImg, d.HSpacer{}},
+			},
+			d.Label{
+				Text: "Allow a technician to view and control this computer so they can help you. " +
+					"You stay in control and can end the session at any time.",
+				Font: d.Font{PointSize: 9},
+			},
 			d.VSeparator{},
-			d.Label{AssignTo: &idCaption, Text: "Your support ID — read this to your technician:"},
-			d.Label{AssignTo: &idLabel, Text: idText, Font: d.Font{Family: "Segoe UI", PointSize: 26, Bold: true}},
+
+			// Support ID + copy.
+			d.Label{AssignTo: &idCaption, Text: "YOUR SUPPORT ID", Font: d.Font{PointSize: 8, Bold: true}},
+			d.Composite{
+				Layout: d.HBox{MarginsZero: true, Spacing: 10},
+				Children: []d.Widget{
+					d.Label{AssignTo: &idLabel, Text: idText, Font: d.Font{Family: "Segoe UI", PointSize: 26, Bold: true}},
+					d.HSpacer{},
+					d.PushButton{Text: "Copy", MaxSize: d.Size{Width: 72}, OnClicked: func() {
+						if cb := walk.Clipboard(); cb != nil {
+							_ = cb.SetText(idText)
+						}
+					}},
+				},
+			},
+			d.Label{Text: "Read this ID to your " + productName + " technician.", Font: d.Font{PointSize: 9}},
+			d.VSeparator{},
+
+			// Status line.
 			d.Composite{
 				Layout: d.HBox{MarginsZero: true, Spacing: 8},
 				Children: []d.Widget{
@@ -82,16 +123,37 @@ func platformRun(ctx context.Context, p platformUI) {
 					d.HSpacer{},
 				},
 			},
+
+			// Inline consent prompt (hidden until a request arrives).
+			d.Composite{
+				AssignTo: &u.consentBox,
+				Visible:  false,
+				Layout:   d.VBox{MarginsZero: true, Spacing: 8},
+				Children: []d.Widget{
+					d.Label{AssignTo: &u.consentLabel, Text: "", Font: d.Font{PointSize: 10, Bold: true}},
+					d.Composite{
+						Layout: d.HBox{MarginsZero: true, Spacing: 10},
+						Children: []d.Widget{
+							d.PushButton{Text: "Allow", OnClicked: func() { u.answerConsent(true) }},
+							d.PushButton{Text: "Deny", OnClicked: func() { u.answerConsent(false) }},
+							d.HSpacer{},
+						},
+					},
+				},
+			},
+
+			// End-session button (hidden until a session is active).
 			d.PushButton{
 				AssignTo:  &u.disconnectBt,
 				Text:      "End session",
 				Visible:   false,
 				OnClicked: func() { u.client.Disconnect() },
 			},
+
 			d.VSpacer{},
 			d.Label{
-				Text: "Keep this window open during support. No one can see or control this PC " +
-					"unless you click Allow. Closing this window ends the session immediately.",
+				Text: "No one can see or control this PC unless you click Allow. " +
+					"Closing this window ends the session immediately.",
 				Font: d.Font{PointSize: 8},
 			},
 		},
@@ -103,15 +165,18 @@ func platformRun(ctx context.Context, p platformUI) {
 		return
 	}
 
-	// Apply brand colors (declarative widgets don't take text colors directly).
-	header.SetTextColor(colNavy)
+	// Window / taskbar icon.
+	if img, err := renderIcon(64); err == nil {
+		if icon, err := walk.NewIconFromImageForDPI(img, 96); err == nil {
+			u.mw.SetIcon(icon)
+		}
+	}
+
+	// Brand colors (declarative widgets don't take text colors directly).
 	idLabel.SetTextColor(colNavy)
 	idCaption.SetTextColor(colMuted)
 	u.statusDot.SetTextColor(colGreen)
 	u.statusLabel.SetTextColor(colMuted)
-
-	// Keep the window above others so the customer always sees it.
-	win.SetWindowPos(u.mw.Handle(), win.HWND_TOPMOST, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE)
 
 	// Run the client in the background.
 	go p.client.Run(runCtx)
@@ -128,30 +193,68 @@ func platformRun(ctx context.Context, p platformUI) {
 	cancel()   // closing the window ends any session
 }
 
-// promptConsent shows the modal Allow/Deny dialog on the UI thread and returns
-// the customer's choice (deny on timeout). Called from the signaling goroutine.
+// answerConsent is called on the UI thread by the Allow/Deny buttons.
+func (u *winUI) answerConsent(allow bool) {
+	if u.consent != nil {
+		select {
+		case u.consent <- allow:
+		default:
+		}
+	}
+	u.consentBox.SetVisible(false)
+}
+
+// bringToFront restores and focuses the window (used when a request arrives).
+func (u *winUI) bringToFront() {
+	h := u.mw.Handle()
+	win.ShowWindow(h, win.SW_RESTORE)
+	win.SetWindowPos(h, win.HWND_TOPMOST, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE)
+	win.SetWindowPos(h, win.HWND_NOTOPMOST, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE)
+	win.SetForegroundWindow(h)
+}
+
+// setTopmost pins or unpins the window above others.
+func (u *winUI) setTopmost(on bool) {
+	after := win.HWND_NOTOPMOST
+	if on {
+		after = win.HWND_TOPMOST
+	}
+	win.SetWindowPos(u.mw.Handle(), after, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE)
+}
+
+// promptConsent shows the inline Allow/Deny prompt and returns the customer's
+// choice (deny on timeout). Called from the signaling goroutine.
 func promptConsent(_, tech string) bool {
 	u := ui
 	if u == nil || u.mw == nil {
 		return false
 	}
-	resp := make(chan bool, 1)
+	ch := make(chan bool, 1)
 	u.mw.Synchronize(func() {
-		msg := tech + " is requesting to view and control this computer.\n\n" +
-			"Only click Yes if you are expecting support from " + productName + ".\n\nAllow this session?"
-		r := walk.MsgBox(u.mw, productName+" — Allow session?", msg,
-			walk.MsgBoxYesNo|walk.MsgBoxIconWarning|walk.MsgBoxDefButton2)
-		resp <- r == win.IDYES
+		u.consent = ch
+		u.consentLabel.SetText(tech + " is requesting to connect. Allow this session?")
+		u.consentBox.SetVisible(true)
+		u.statusDot.SetTextColor(colNavy)
+		u.statusLabel.SetTextColor(colNavy)
+		u.statusLabel.SetText("A technician is requesting access…")
+		u.bringToFront()
 	})
+	defer func() {
+		u.mw.Synchronize(func() {
+			u.consent = nil
+			u.consentBox.SetVisible(false)
+		})
+	}()
 	select {
-	case v := <-resp:
+	case v := <-ch:
 		return v
 	case <-time.After(29 * time.Second):
 		return false
 	}
 }
 
-// showBanner turns the window into a visible "being controlled" indicator.
+// showBanner turns the window into a visible "being controlled" indicator and
+// pins it on top so the customer always sees the session is live.
 func showBanner(tech string) {
 	u := ui
 	if u == nil || u.mw == nil {
@@ -163,11 +266,11 @@ func showBanner(tech string) {
 		u.statusLabel.SetText("Your screen is being controlled by " + tech)
 		u.disconnectBt.SetVisible(true)
 		u.mw.SetTitle(productName + " — CONNECTED")
-		win.SetWindowPos(u.mw.Handle(), win.HWND_TOPMOST, 0, 0, 0, 0, win.SWP_NOMOVE|win.SWP_NOSIZE)
+		u.setTopmost(true)
 	})
 }
 
-// hideBanner restores the idle state after a session ends.
+// hideBanner restores the idle state (and drops always-on-top) after a session.
 func hideBanner() {
 	u := ui
 	if u == nil || u.mw == nil {
@@ -179,6 +282,7 @@ func hideBanner() {
 		u.statusLabel.SetText("Waiting for a support session…")
 		u.disconnectBt.SetVisible(false)
 		u.mw.SetTitle(productName)
+		u.setTopmost(false)
 	})
 }
 

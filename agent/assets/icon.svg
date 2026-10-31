@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Square app icon: navy tile + bold "NYK" + brand accents. No transforms
+     (the pure-Go rasterizer applies letter geometry directly). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#2d3d7f"/>
+  <g fill="none" stroke="#ffffff" stroke-width="19" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M40,176 V80 L104,176 V80"/>
+    <path d="M120,80 L148,126 L176,80 M148,126 V176"/>
+    <path d="M192,80 V176 M192,128 L236,80 M192,130 L236,176"/>
+  </g>
+  <rect x="40" y="196" width="146" height="12" rx="6" fill="#699ad2"/>
+  <rect x="196" y="192" width="36" height="20" rx="6" fill="#e16731"/>
+</svg>
