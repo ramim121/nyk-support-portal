@@ -29,13 +29,23 @@ import (
 	"github.com/nyk/support-portal/protocol"
 )
 
-// Version is overridden at build time with -ldflags "-X main.Version=...".
-var Version = "dev"
+// These are set at build time with -ldflags "-X main.Xxx=...", so a release
+// .exe ships pointing at your server with your org key already baked in and the
+// customer just runs it:
+//
+//	-X main.Version=1.0.0
+//	-X main.DefaultServer=wss://support.example.com
+//	-X main.DefaultOrgKey=<org key>
+var (
+	Version       = "dev"
+	DefaultServer = "ws://localhost:8080"
+	DefaultOrgKey = ""
+)
 
 func main() {
 	var (
-		server     = flag.String("server", envOr("NYK_SERVER", "ws://localhost:8080"), "server base URL (ws:// or wss://), no path")
-		orgKey     = flag.String("orgkey", envOr("NYK_ORG_KEY", ""), "shared org key")
+		server     = flag.String("server", envOr("NYK_SERVER", DefaultServer), "server base URL (ws:// or wss://), no path")
+		orgKey     = flag.String("orgkey", envOr("NYK_ORG_KEY", DefaultOrgKey), "shared org key")
 		id         = flag.String("id", envOr("NYK_DEVICE_ID", ""), "9-digit device id (generated if empty)")
 		hostname   = flag.String("hostname", "", "hostname to report (defaults to OS hostname)")
 		headless   = flag.Bool("headless", false, "run without a window (dev/CI)")
@@ -116,7 +126,24 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	client.Run(ctx)
+
+	// platformRun hands control to the platform: on Windows (non-headless) it
+	// opens the status/banner window and runs its message loop with the client
+	// in the background; elsewhere (and when headless) it just runs the client.
+	platformRun(ctx, platformUI{
+		client:   client,
+		deviceID: deviceID,
+		server:   *server,
+		headless: *headless,
+	})
+}
+
+// platformUI carries what the platform's UI needs from main.
+type platformUI struct {
+	client   *signaling.Client
+	deviceID string
+	server   string
+	headless bool
 }
 
 // makeConsentFunc returns the consent callback. In a headed build this would

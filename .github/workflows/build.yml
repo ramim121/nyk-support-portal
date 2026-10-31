@@ -1,0 +1,79 @@
+name: build
+
+# Builds the Linux server and the Windows agent.exe / console.exe. Everything is
+# pure Go (CGO disabled), so the Windows binaries are cross-compiled on Linux —
+# no Windows runner needed.
+#
+# Configure these in the repo (Settings -> Secrets and variables -> Actions) so
+# the released binaries point at your server out of the box:
+#   Variable  NYK_SERVER       e.g. wss://support.yourdomain.com     (agent)
+#   Variable  NYK_CONSOLE_URL  e.g. https://support.yourdomain.com/console (console.exe)
+#   Secret    NYK_ORG_KEY      the shared org key (same as the server's)
+# If unset, the build still succeeds with placeholder defaults.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build console web app
+        working-directory: console/frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Go tests
+        run: go test ./...
+
+      - name: Version string
+        run: echo "VER=${GITHUB_REF_NAME}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Build server (Linux)
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -ldflags "-X main.Version=${VER}" -o dist/nyk-server ./server
+
+      - name: Embed Windows manifest for the agent
+        run: |
+          go run github.com/akavel/rsrc@v0.10.2 -manifest agent/app.manifest -arch amd64 -o agent/rsrc_windows.syso
+
+      - name: Build agent.exe
+        env:
+          NYK_SERVER: ${{ vars.NYK_SERVER }}
+          NYK_ORG_KEY: ${{ secrets.NYK_ORG_KEY }}
+        run: |
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags "-H windowsgui -X main.Version=${VER} -X main.DefaultServer=${NYK_SERVER:-ws://localhost:8080} -X main.DefaultOrgKey=${NYK_ORG_KEY}" \
+            -o dist/agent.exe ./agent
+
+      - name: Build console.exe
+        env:
+          NYK_CONSOLE_URL: ${{ vars.NYK_CONSOLE_URL }}
+        run: |
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags "-H windowsgui -X main.Version=${VER} -X main.ServerURL=${NYK_CONSOLE_URL:-https://support.example.com/console}" \
+            -o dist/console.exe ./console
+
+      - name: Bundle console web app for the server
+        run: cp -r console/frontend/dist dist/console-web
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nyk-support-portal-${{ github.sha }}
+          path: dist/
+          retention-days: 30

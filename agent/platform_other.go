@@ -3,11 +3,18 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"github.com/nyk/support-portal/agent/capture"
 	"github.com/nyk/support-portal/agent/input"
 )
+
+// platformRun just runs the signaling client on non-Windows platforms (dev/CI);
+// there is no desktop UI here.
+func platformRun(ctx context.Context, ui platformUI) {
+	ui.client.Run(ctx)
+}
 
 // Non-Windows fallbacks. The production agent targets Windows; on other
 // platforms (dev/CI) the agent always runs with the fake source + log sink, so

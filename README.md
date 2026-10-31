@@ -48,9 +48,20 @@ fallback; only the media format differs from a classic video codec.
 - [x] Agent core: signaling, WebRTC, pure-Go tile encoder, fake source, input decode
 - [x] **End-to-end pipeline verified on Linux** (headless Chromium): consent → tiles
       decode & animate on canvas → mouse/keyboard reach the client with correct mapping
-- [ ] Agent consent UI + always-on-top banner (native Windows window)
-- [ ] Windows screen capture + input injection (pure-Go `kbinani/screenshot` + input lib)
-- [ ] CI build of `agent.exe` / `console.exe` + full runbook
+- [x] Agent consent dialog + always-on-top status/banner window with Disconnect (`walk`)
+- [x] Windows screen capture (`kbinani/screenshot`) + input injection (`SendInput`), pure Go
+- [x] `console.exe` desktop wrapper (WebView2, pure Go)
+- [x] CI builds `agent.exe`, `console.exe`, Linux `nyk-server` (all cross-compiled on Linux)
+- [ ] **Real-Windows smoke test** of the agent window, capture and input (can't run on Linux CI)
+- [ ] Code signing before customer rollout
+
+### What is verified vs. not
+The server, signaling, consent flow, tile streaming and input mapping are all
+**verified end-to-end on Linux** with a headless browser. The Windows-only code
+(screen capture, `SendInput` injection, and the `walk` status window) **compiles
+and cross-compiles cleanly** but has not been run on a real Windows desktop in
+this environment — that is the one remaining verification, and the first thing
+to do with the CI-built `agent.exe`.
 
 ## Security model
 
@@ -77,6 +88,36 @@ go build -o bin/nyk-server ./server
 NYK_ORG_KEY=dev-key ./bin/nyk-server -dev
 ```
 
-Windows `agent.exe` and `console.exe` are produced by the GitHub Actions
-workflow in `.github/workflows/` (see the Deploy section of this README once
-complete).
+### Windows apps (cross-compiled from Linux/macOS — no cgo, no Windows needed)
+
+```bash
+# Customer agent — bake in your server + org key so it needs no config:
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+  -ldflags "-H windowsgui -X main.Version=1.0.0 \
+            -X main.DefaultServer=wss://support.yourdomain.com \
+            -X main.DefaultOrgKey=YOUR_ORG_KEY" \
+  -o agent.exe ./agent
+
+# Technician desktop console (points at the hosted console UI):
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build \
+  -ldflags "-H windowsgui -X main.ServerURL=https://support.yourdomain.com/console" \
+  -o console.exe ./console
+```
+
+CI (`.github/workflows/build.yml`) does all of this automatically and uploads
+`agent.exe`, `console.exe`, the Linux `nyk-server`, and the console web bundle as
+build artifacts. Set the repo variables `NYK_SERVER`, `NYK_CONSOLE_URL` and the
+secret `NYK_ORG_KEY` so released binaries point at your server.
+
+### Dev loop (Linux/macOS, no Windows)
+
+```bash
+# terminal 1: server
+NYK_ORG_KEY=dev ./bin/nyk-server -dev -console-dir console/frontend/dist
+./bin/nyk-server adduser alice           # once
+
+# terminal 2: a fake client that streams a test pattern and logs input
+./bin/nyk-agent -server ws://localhost:8080 -orgkey dev -fake-capture -auto-accept
+
+# browser: http://localhost:8080  (log in, connect to the fake PC)
+```
